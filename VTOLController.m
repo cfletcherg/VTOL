@@ -30,6 +30,18 @@ classdef VTOLController < handle
         integratorh
         error_dz
         error_dh
+        x_hat_lat
+        x_hat_lon
+        Alat
+        Blat
+        Clat
+        Llat
+        Alon
+        Blon
+        Clon
+        Llon
+        F_d1
+        Tau_d1
     end
     %----------------------------
     methods
@@ -52,12 +64,24 @@ classdef VTOLController < handle
             self.zdot = P.zdot0;
             self.hdot = P.hdot0;
             self.thetadot = P.thetadot0;
-            self.error_dz = 0.0;
-            self.error_dh = 0.0;
+            self.error_dz = 0;
+            self.error_dh = 0;
             self.kilat = P.kilat;
             self.kilon = P.kilon;
-            self.integratorz = 0.0;
-            self.integratorh = 0.0;
+            self.integratorz = 0;
+            self.integratorh = 0;
+            self.Alat = P.Alat;
+            self.Blat = P.Blat;
+            self.Clat = P.Clat;
+            self.Llat = P.Llat;
+            self.Alon = P.Alon;
+            self.Blon = P.Blon;
+            self.Clon = P.Clon;
+            self.Llon = P.Llon;
+            self.F_d1 = 0;
+            self.Tau_d1 = 0;
+            self.x_hat_lat = [0; 0; 0; 0];
+            self.x_hat_lon = [0; 0];
             
             % Instantiates the PD control objects
             % self.zCtrl = PIDControl(P.kp_z, P.kd_z, P.ki_z, P.theta_max, P.beta, P.Ts);
@@ -70,83 +94,97 @@ classdef VTOLController < handle
             % y is the current state
             z_r = y_r(1);
             h_r = y_r(2);
+            ylat = [y(1); y(3)];
+            ylon = [y(2)];
             
-            z = y(1);
-            h = y(2);
-            theta = y(3);
-            
+            % update the observer and extract z_hat and h_hat
+            self.updateObserverLat(ylat);
+            self.updateObserverLon(ylon);
+            z_hat = self.x_hat_lat(1);
+            h_hat = self.x_hat_lon(1);
             
             Fe = (self.ml + self.mr + self.mc)*self.g;
             
-            self.differentiateZ(z);
-            self.differentiateH(h);
-            self.differentiateTheta(theta);
-            
             % integrate error
-            errorh = h_r - h;
-            errorz = z_r - z;
+            errorh = h_r - h_hat;
+            errorz = z_r - z_hat;
             self.integrateErrorH(errorh);
             self.integrateErrorZ(errorz);
+
+            F_tilda = -self.Klon*self.x_hat_lon - self.kilon*self.integratorh;
             
-            xlon = [h; self.hdot];
-            F_tilda = -self.Klon*xlon - self.kilon*self.integratorh;
-            
-            xlat = [z; theta; self.zdot; self.thetadot];
-            tau_unsat = -self.Klat*xlat - self.kilat*self.integratorz;
-            %             Ftilda = self.hCtrl.PD(h_r, h, false);
-            %             theta_r = self.zCtrl.PD(z_r, z, false);
-            %             tau = self.thetaCtrl.PD(theta_r, theta, false);
-            
-            % Implement your controller here...
-            
-            % You may choose to implement the PD control directly or call the
-            % PDControl class.  The PDControl class will return a force output
-            % for the given reference input and current state.
-            % i.e. for the z-controller (already set up in the constructor)
-            % call: z_force = self.zCtrl.PD(z_r, z, false);
-            % For the theta controller call:
-            %       theta_force = self.thetaCtrl.PD(theta_r, theta, false);
-            % You will need to determine what the output is for these
-            % controllers in relation to the block diagrams derived for the
-            % inner and outer loop control.
-            
-            % compute the total force
+            tau_unsat = -self.Klat*self.x_hat_lat - self.kilat*self.integratorz;
+           
             F_unsat = Fe + F_tilda;
             F = self.saturateF(F_unsat);
-            self.integratorAntiWindupF(F, F_unsat);
+            self.updateForce(F);
             tau = self.saturateTau(tau_unsat);
-            self.integratorAntiWindupTau(tau, tau_unsat);
+            self.updateTau(tau);
             u = [F; tau];
         end
         %----------------------------
-        function self = integratorAntiWindupF(self, u_sat, u_unsat)
-           self.integratorh = self.integratorh + self.Ts/self.kilon*(u_sat-u_unsat); 
+        function self = updateForce(self, F)
+            self.F_d1 = F;
         end
         %----------------------------
-        function self = integratorAntiWindupTau(self, u_sat, u_unsat)
-            self.integratorz = self.integratorz + self.Ts/self.kilat*(u_sat-u_unsat);
+        function self = updateTau(self, tau)
+            self.Tau_d1 = tau;
         end
         %----------------------------
-        function self = differentiateZ(self, z)
-            self.zdot = ...
-                self.beta*self.zdot...
-                + (1-self.beta)*((z-self.z0) / self.Ts);
-            self.z0 = z;
+        function self = updateObserverLat(self, y_m)
+            % compute equilibrium torque tau_e at old angle
+            Tau_e = 0;
+
+            N = 10;
+            for i=1:N
+                self.x_hat_lat = self.x_hat_lat + self.Ts/N*(...
+                    self.Alat*self.x_hat_lat...
+                    + self.Blat*(self.Tau_d1-Tau_e)...
+                    + self.Llat*(y_m-self.Clat*self.x_hat_lat));
+            end
         end
         %----------------------------
-        function self = differentiateH(self, h)
-            self.hdot = ...
-                self.beta*self.hdot...
-                + (1-self.beta)*((h-self.h0) / self.Ts);
-            self.h0 = h;
+        function self = updateObserverLon(self, y_m)
+            % compute equilibrium torque tau_e at old angle
+            Fe = (self.ml + self.mr + self.mc)*self.g;
+
+            N = 10;
+            for i=1:N
+                self.x_hat_lon = self.x_hat_lon + self.Ts/N*(...
+                    self.Alon*self.x_hat_lon...
+                    + self.Blon*(self.F_d1-Fe)...
+                    + self.Llon*(y_m-self.Clon*self.x_hat_lon));
+            end
         end
         %----------------------------
-        function self = differentiateTheta(self, theta)
-            self.thetadot = ...
-                self.beta*self.thetadot...
-                + (1-self.beta)*((theta-self.theta0) / self.Ts);
-            self.theta0 = theta;
-        end
+%         function self = integratorAntiWindupF(self, u_sat, u_unsat)
+%            self.integratorh = self.integratorh + self.Ts/self.kilon*(u_sat-u_unsat); 
+%         end
+        %----------------------------
+%         function self = integratorAntiWindupTau(self, u_sat, u_unsat)
+%             self.integratorz = self.integratorz + self.Ts/self.kilat*(u_sat-u_unsat);
+%         end
+        %----------------------------
+%         function self = differentiateZ(self, z)
+%             self.zdot = ...
+%                 self.beta*self.zdot...
+%                 + (1-self.beta)*((z-self.z0) / self.Ts);
+%             self.z0 = z;
+%         end
+%         %----------------------------
+%         function self = differentiateH(self, h)
+%             self.hdot = ...
+%                 self.beta*self.hdot...
+%                 + (1-self.beta)*((h-self.h0) / self.Ts);
+%             self.h0 = h;
+%         end
+%         %----------------------------
+%         function self = differentiateTheta(self, theta)
+%             self.thetadot = ...
+%                 self.beta*self.thetadot...
+%                 + (1-self.beta)*((theta-self.theta0) / self.Ts);
+%             self.theta0 = theta;
+%         end
         %----------------------------
         function out = saturateF(self,u)
             if abs(u) > self.Fmax

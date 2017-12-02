@@ -1,5 +1,5 @@
 clear all
-VTOLParamHW9;  % load parameters
+VTOLParamHW10;  % load parameters
 
 % instantiate ballbeam, controller, and reference input classes 
 % Instantiate Dynamics class
@@ -16,6 +16,7 @@ reference_h = signalGenerator(amplitude_h, frequency_h);
 % instantiate the data plots and animation
 dataPlot = plotData(P);
 animation = VTOLAnimation(P);
+observerPlot = plotObserverData(P);
 
 % main simulation loop
 t = P.t_start;  % time starts at t_start
@@ -35,6 +36,7 @@ while t < P.t_end
     animation.drawVTOL(VTOL.states);
     VTOL.states;
     dataPlot.updatePlots(t, ref_input, VTOL.states, u);
+    observerPlot.updatePlots(t, VTOL.states, ctrl.x_hat_lat, ctrl.x_hat_lon);
 end
 
 

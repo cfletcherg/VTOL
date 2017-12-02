@@ -11,13 +11,16 @@ VTOLParam % general ballbeam parameters
 % times, separation value between inner loop and outer, et.
 
 % saturation limits for beam angle and total force
-Tr_theta = .25;
+Tr_theta = .2;
 Tr_z = Tr_theta*10;
 wn_theta = 2.2/Tr_theta;
+wn_theta_obs = 22*wn_theta;
 zeta = .9;
 wn_z = 2.2/Tr_z;
-Tr_h = 2;
+wn_z_obs = 40*wn_z;
+Tr_h = 1.8;
 wn_h = 2.2/Tr_h;
+wn_h_obs = 40*wn_h;
 
 % PD design for inner loop
 % calculate the kp and kd gains for theta here...
@@ -50,29 +53,31 @@ fe = P.g*(P.mc+2*P.ml);
 
 %---------------------
 % state space design 
-Alat = [0 0 1 0;...
-        0 0 0 1;...
-        0 -fe/(P.mc+2*P.ml) -P.u/(P.mc+2*P.ml) 0;...
-        0 0 0 0];
-Blat = [0;...
-        0;...
-        0;...
-        1/(P.Jc+2*P.ml*P.d^2)];
-Clat = [1 0 0 0];
+P.Alat = [0 0 1 0;...
+          0 0 0 1;...
+          0 -fe/(P.mc+2*P.ml) -P.u/(P.mc+2*P.ml) 0;...
+          0 0 0 0];
+P.Blat = [0;...
+          0;...
+          0;...
+          1/(P.Jc+2*P.ml*P.d^2)];
+P.Clat = [1 0 0 0;...
+          0 1 0 0];
+Clat_o = [1 0 0 0];
 
-Alon = [0 1;...
-        0 0];
-Blon = [0;...
-        1/P.mc + 2*P.mr];
-Clon = [1 0];
+P.Alon = [0 1;...
+          0 0];
+P.Blon = [0;...
+          1/P.mc + 2*P.mr];
+P.Clon = [1 0];
 
-A1lon = [Alon, zeros(2,1);... 
-         -Clon, 0];
-B1lon = [Blon;...
+A1lon = [P.Alon, zeros(2,1);... 
+         -P.Clon, 0];
+B1lon = [P.Blon;...
          0];
-A1lat = [Alat, zeros(4,1);...
-         -Clat, 0];
-B1lat = [Blat;...
+A1lat = [P.Alat, zeros(4,1);...
+         -Clat_o, 0];
+B1lat = [P.Blat;...
          0];
 
 % gains for pole locations
@@ -86,8 +91,8 @@ des_char_poly_lon = conv([1,2*zeta*wn_h,wn_h^2], poly(integrator_pole));
 des_poles_lon = roots(des_char_poly_lon);
 
 % is the system controllable?
-rank(ctrb(Alat,Blat));
-rank(ctrb(Alon,Blon));
+rank(ctrb(P.Alat,P.Blat));
+rank(ctrb(P.Alon,P.Blon));
 
 K1lat = place(A1lat,B1lat,des_poles_lat);
 K1lon = place(A1lon,B1lon,des_poles_lon);
@@ -95,5 +100,22 @@ P.Klat = K1lat(1:4);
 P.kilat = K1lat(5);
 P.Klon = K1lon(1:2);
 P.kilon = K1lon(3);
+
+% observer design - lat
+des_obsv_char_poly_lat = conv(...
+    [1,2*zeta*wn_z_obs,wn_z_obs^2],...
+    [1,2*zeta*wn_theta_obs,wn_theta_obs^2]);
+des_obsv_poles_lat = roots(des_obsv_char_poly_lat);
+
+rank(obsv(P.Alat,P.Clat));
+P.Llat = place(P.Alat',P.Clat',des_obsv_poles_lat)';
+
+% observer design - lon
+des_obsv_char_poly_lon = [1,2*zeta*wn_h_obs,wn_h_obs^2];
+des_obsv_poles_lon = roots(des_obsv_char_poly_lon);
+
+rank(obsv(P.Alon,P.Clon));
+P.Llon = place(P.Alon',P.Clon',des_obsv_poles_lon)';
+
 
 
